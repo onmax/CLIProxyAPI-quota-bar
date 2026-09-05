@@ -56,7 +56,6 @@ func timeLeft(_ value: Double) -> String {
     @Published var failed = false
     @Published var resetView = false
     @Published var selectedID: String?
-    @Published var expanded: Set<String> = []
     var updated: (() -> Void)?
     private var timer: Timer?
     var selected: Account? { snapshot?.accounts.first { $0.id == selectedID } }
@@ -140,17 +139,34 @@ func timeLeft(_ value: Double) -> String {
     }
 }
 
+struct QuotaTrack: View {
+    let value: Double
+    var capacity: Double = 100
+    let color: Color
+    var track: Color = Color.primary.opacity(0.09)
+    var body: some View {
+        GeometryReader { geometry in
+            ZStack(alignment: .leading) {
+                Capsule().fill(track)
+                if value > 0 && capacity > 0 {
+                    Rectangle().fill(color)
+                        .frame(width: geometry.size.width * min(1, value / capacity))
+                }
+            }.clipShape(Capsule())
+        }.frame(height: 4)
+            .accessibilityLabel("Quota remaining")
+            .accessibilityValue(percent(value))
+    }
+}
+
 struct QuotaView: View {
     @ObservedObject var store: Store
-    private let blue = Color(red: 0.10, green: 0.38, blue: 0.95)
+    private let blue = Color(red: 0.02, green: 0.36, blue: 0.85)
     var body: some View {
         VStack(spacing: 0) {
-            HStack(spacing: 10) {
-                Image(systemName: "terminal.fill").font(.system(size: 23)).foregroundStyle(blue)
-                VStack(alignment: .leading, spacing: 1) {
-                    Text("Codex").font(.system(size: 16, weight: .semibold))
-                    Text("Your account pool").font(.system(size: 11)).foregroundStyle(.secondary)
-                }
+            HStack(spacing: 9) {
+                Image(systemName: "terminal.fill").font(.system(size: 19)).foregroundStyle(blue)
+                Text("Codex").font(.system(size: 15, weight: .semibold))
                 Spacer()
                 Button(action: store.refresh) { Image(systemName: "arrow.clockwise") }
                     .buttonStyle(.plain).disabled(store.busy).help("Refresh quota")
@@ -160,219 +176,194 @@ struct QuotaView: View {
                     Button("Quit Quota Bar") { NSApp.terminate(nil) }
                 } label: { Image(systemName: "ellipsis.circle") }
                     .menuStyle(.borderlessButton).fixedSize().help("More options")
-            }.padding(.horizontal, 20).padding(.top, 19).padding(.bottom, 16)
+            }.padding(.horizontal, 16).padding(.vertical, 12)
             HStack(spacing: 4) {
                 tab("Overview", symbol: "square.grid.2x2", active: !store.resetView) { store.resetView = false }
-                tab("Reset", symbol: "arrow.counterclockwise", active: store.resetView) { store.preview() }
-            }.padding(4).background(.quaternary.opacity(0.6), in: RoundedRectangle(cornerRadius: 10))
-                .padding(.horizontal, 20).padding(.bottom, 14)
+                tab("Resets", symbol: "arrow.counterclockwise", active: store.resetView) { store.preview() }
+            }.padding(3).background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 8))
+                .padding(.horizontal, 14).padding(.bottom, 10)
             ScrollView {
-                VStack(alignment: .leading, spacing: 14) {
-                    if let snapshot = store.snapshot {
-                        if store.resetView { resetPanel(snapshot) } else { overview(snapshot) }
+                VStack(alignment: .leading, spacing: 10) {
+                    if let s = store.snapshot {
+                        if store.resetView { resetPanel(s) } else { overview(s) }
                     } else {
-                        VStack(spacing: 12) {
+                        VStack(spacing: 10) {
                             if store.busy { ProgressView() }
                             Text(store.busy ? "Reading your account pool…" : "Your pool is unavailable")
                                 .foregroundStyle(.secondary)
-                        }.frame(maxWidth: .infinity, minHeight: 220)
+                        }.frame(maxWidth: .infinity, minHeight: 180)
                     }
                     if let message = store.message {
                         Label(message, systemImage: store.failed ? "exclamationmark.circle" : "checkmark.circle")
-                            .font(.system(size: 12)).foregroundStyle(store.failed ? .orange : .green)
+                            .font(.system(size: 11)).foregroundStyle(store.failed ? .orange : .green)
                             .fixedSize(horizontal: false, vertical: true)
-                            .padding(12).frame(maxWidth: .infinity, alignment: .leading)
-                            .background(.quaternary.opacity(0.45), in: RoundedRectangle(cornerRadius: 10))
+                            .padding(10).frame(maxWidth: .infinity, alignment: .leading)
+                            .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 8))
                     }
-                }.padding(.horizontal, 20).padding(.bottom, 16)
-            }
+                }.padding(.horizontal, 14).padding(.bottom, 10)
+            }.scrollIndicators(.hidden).scrollBounceBehavior(.basedOnSize)
             Divider()
-            HStack(spacing: 6) {
+            HStack(spacing: 5) {
                 if store.busy { ProgressView().controlSize(.mini) }
-                Circle().fill(store.stale || store.failed ? .orange : .green).frame(width: 5, height: 5)
+                Circle().fill(store.stale || store.failed ? .orange : .green).frame(width: 4, height: 4)
                 Text(store.busy ? "Refreshing…" : (store.stale || store.failed ? "Last known data" : "Updated"))
-                if let s = store.snapshot {
-                    Text(Date(timeIntervalSince1970: s.updated), style: .time).monospacedDigit()
-                }
+                if let s = store.snapshot { Text(Date(timeIntervalSince1970: s.updated), style: .time).monospacedDigit() }
                 Spacer()
-                Text("Every 5 min")
-            }.font(.system(size: 10)).foregroundStyle(.secondary).padding(.horizontal, 20).padding(.vertical, 12)
-        }.frame(width: 430, height: 690)
+                Button("Dashboard", action: store.openDashboard).buttonStyle(.plain)
+            }.font(.system(size: 10)).foregroundStyle(.secondary).padding(.horizontal, 16).padding(.vertical, 9)
+        }.frame(width: 400, height: 620)
             .background(Color(nsColor: .windowBackgroundColor))
     }
 
     private func tab(_ title: String, symbol: String, active: Bool, action: @escaping () -> Void) -> some View {
         Button(action: action) {
-            Label(title, systemImage: symbol).font(.system(size: 12, weight: .medium))
-                .frame(maxWidth: .infinity).padding(.vertical, 7)
-                .background(active ? Color(nsColor: .controlBackgroundColor) : .clear, in: RoundedRectangle(cornerRadius: 7))
-                .foregroundStyle(active ? .primary : .secondary)
+            Label(title, systemImage: symbol).font(.system(size: 11, weight: .medium))
+                .frame(maxWidth: .infinity).padding(.vertical, 6)
+                .background(active ? blue : .clear, in: RoundedRectangle(cornerRadius: 6))
+                .foregroundStyle(active ? Color.white : Color.secondary)
         }.buttonStyle(.plain)
     }
     private func overview(_ s: Snapshot) -> some View {
-        VStack(alignment: .leading, spacing: 14) {
-            VStack(alignment: .leading, spacing: 14) {
+        VStack(alignment: .leading, spacing: 10) {
+            VStack(alignment: .leading, spacing: 8) {
                 HStack {
-                    Text("WEEKLY REMAINING").font(.system(size: 10, weight: .semibold)).tracking(1)
+                    Text("Weekly remaining").font(.system(size: 12, weight: .semibold))
                     Spacer()
-                    Text("\(s.accounts.count) PRO ACCOUNTS").font(.system(size: 9, weight: .medium)).opacity(0.8)
+                    Text("\(s.accounts.count) Pro accounts").font(.system(size: 10)).opacity(0.8)
                 }
-                HStack(alignment: .firstTextBaseline, spacing: 6) {
-                    Text(percent(s.total)).font(.system(size: 44, weight: .semibold, design: .rounded)).monospacedDigit()
-                    Text("/ \(s.capacity)%").font(.system(size: 18, weight: .medium)).opacity(0.65)
-                    Spacer()
-                }
-                ProgressView(value: s.total ?? 0, total: Double(s.capacity)).tint(.white)
-                HStack {
-                    Text("Combined across your accounts")
+                HStack(alignment: .firstTextBaseline, spacing: 5) {
+                    Text(percent(s.total)).font(.system(size: 35, weight: .semibold)).monospacedDigit()
+                    Text("/ \(s.capacity)%").font(.system(size: 16)).opacity(0.65)
                     Spacer()
                     let count = s.accounts.compactMap(\.available)
                     Text(count.count == s.accounts.count ? "\(count.reduce(0, +)) resets saved" : "Resets unknown")
-                }.font(.system(size: 10)).opacity(0.9)
-            }.foregroundStyle(.white).padding(18)
-                .background(LinearGradient(colors: [blue, Color(red: 0.08, green: 0.29, blue: 0.77)], startPoint: .topLeading, endPoint: .bottomTrailing), in: RoundedRectangle(cornerRadius: 15))
+                        .font(.system(size: 10)).opacity(0.85)
+                }
+                QuotaTrack(value: s.total ?? 0, capacity: Double(s.capacity), color: .white, track: .white.opacity(0.2))
+            }.foregroundStyle(.white).padding(14).background(blue, in: RoundedRectangle(cornerRadius: 10))
             HStack {
-                Text("ACCOUNTS").font(.system(size: 10, weight: .semibold)).tracking(0.8).foregroundStyle(.secondary)
+                Text("Accounts").fontWeight(.semibold)
                 Spacer()
-                Text("Weekly remaining").font(.system(size: 10)).foregroundStyle(.secondary)
-            }.padding(.top, 3)
+                Text("Weekly remaining")
+            }.font(.system(size: 10)).foregroundStyle(.secondary).padding(.horizontal, 2)
             VStack(spacing: 0) {
                 ForEach(Array(s.accounts.enumerated()), id: \.element.id) { index, account in
                     accountRow(account)
-                    if index < s.accounts.count - 1 { Divider().padding(.horizontal, 14) }
+                    if index < s.accounts.count - 1 { Divider().padding(.horizontal, 12) }
                 }
-            }.background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 13))
+            }.background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 10))
             if let recommended = s.accounts.first(where: { $0.id == s.recommended }), let credit = recommended.nextCredit {
                 Button { store.preview(recommended) } label: {
-                    HStack(spacing: 10) {
-                        Image(systemName: "arrow.counterclockwise.circle").font(.system(size: 22)).foregroundStyle(blue)
-                        VStack(alignment: .leading, spacing: 3) {
-                            Text("Next reset: \(recommended.name)").font(.system(size: 12, weight: .semibold))
-                            Text("\(percent(recommended.remaining)) left · earliest credit expires in \(timeLeft(credit.expires))")
+                    HStack(spacing: 8) {
+                        Image(systemName: "arrow.counterclockwise").foregroundStyle(blue)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Next reset: \(recommended.name)").font(.system(size: 11, weight: .semibold))
+                            Text("\(percent(recommended.remaining)) left · earliest expiry in \(timeLeft(credit.expires))")
                                 .font(.system(size: 10)).foregroundStyle(.secondary)
                         }
                         Spacer(minLength: 0)
-                        Image(systemName: "chevron.right").font(.system(size: 10)).foregroundStyle(.secondary)
-                    }.padding(12).background(blue.opacity(0.07), in: RoundedRectangle(cornerRadius: 11))
+                        Image(systemName: "chevron.right").font(.system(size: 9)).foregroundStyle(.secondary)
+                    }.padding(10).background(blue.opacity(0.06), in: RoundedRectangle(cornerRadius: 8))
                 }.buttonStyle(.plain)
             } else {
                 Text(s.pending ?? "No account needs an eligible reset right now.")
-                    .font(.system(size: 11)).foregroundStyle(.secondary)
+                    .font(.system(size: 10)).foregroundStyle(.secondary)
             }
         }
     }
     private func accountRow(_ a: Account) -> some View {
-        VStack(alignment: .leading, spacing: 7) {
-            HStack(alignment: .firstTextBaseline) {
-                Text(a.name).font(.system(size: 13, weight: .semibold))
-                Spacer()
-                Text(percent(a.remaining)).font(.system(size: 13, weight: .semibold)).monospacedDigit()
-                    .foregroundStyle((a.remaining ?? 0) > 10 ? blue : .orange)
-            }
-            ProgressView(value: a.remaining ?? 0, total: 100).tint((a.remaining ?? 0) > 10 ? blue : .orange)
-            HStack(alignment: .top, spacing: 8) {
-                VStack(alignment: .leading, spacing: 3) {
-                    if let reset = a.weeklyReset {
-                        Text("Renews in \(timeLeft(reset))").help(dateText(reset))
-                    } else { Text(a.error ?? "Renewal unknown") }
-                    Text(a.creditsError ?? (a.nextCredit.map { "Next reset expires \(dateText($0.expires))" } ?? "No saved resets"))
-                }.font(.system(size: 10)).foregroundStyle(.secondary)
-                Spacer(minLength: 0)
-                Button {
-                    if !store.expanded.insert(a.id).inserted { store.expanded.remove(a.id) }
-                } label: {
-                    HStack(spacing: 4) {
-                        Text(a.available.map { "\($0) resets" } ?? "Resets ?")
-                        Image(systemName: store.expanded.contains(a.id) ? "chevron.up" : "chevron.down").font(.system(size: 8))
-                    }.font(.system(size: 10, weight: .medium)).foregroundStyle(blue)
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .firstTextBaseline, spacing: 9) {
+                Text(a.name).font(.system(size: 12, weight: .semibold))
+                Button { store.preview(a) } label: {
+                    Text(a.available.map { "\($0) resets ›" } ?? "Resets ?")
+                        .font(.system(size: 10)).foregroundStyle(.secondary)
                 }.buttonStyle(.plain).help("Show reset grants and expiry dates")
+                Spacer()
+                Text(percent(a.remaining)).font(.system(size: 12, weight: .semibold)).monospacedDigit()
             }
-            if store.expanded.contains(a.id) {
-                ForEach(a.credits) { credit in creditRow(credit) }
-                Button("Review reset for \(a.name)") { store.preview(a) }
-                    .font(.system(size: 11)).buttonStyle(.link).padding(.top, 2)
-            }
-        }.padding(14)
+            QuotaTrack(value: a.remaining ?? 0, color: (a.remaining ?? 0) > 10 ? blue : .orange)
+            HStack(spacing: 5) {
+                if let reset = a.weeklyReset {
+                    Text("Renews in \(timeLeft(reset))").help(dateText(reset))
+                } else { Text(a.error ?? "Renewal unknown") }
+                Spacer(minLength: 0)
+                if let credit = a.nextCredit {
+                    Text("Reset expires \(Date(timeIntervalSince1970: credit.expires).formatted(.dateTime.month(.abbreviated).day()))")
+                        .help("\(dateText(credit.expires)) · \(timeLeft(credit.expires)) left")
+                } else { Text(a.creditsError ?? "No saved resets") }
+            }.font(.system(size: 10)).foregroundStyle(.secondary)
+        }.padding(.horizontal, 12).padding(.vertical, 10)
     }
     private func creditRow(_ c: ResetCredit) -> some View {
-        HStack(alignment: .top, spacing: 8) {
-            Image(systemName: "arrow.counterclockwise").font(.system(size: 10)).foregroundStyle(.secondary).padding(.top, 2)
-            VStack(alignment: .leading, spacing: 3) {
-                Text("Expires \(dateText(c.expires))").font(.system(size: 11, weight: .medium))
-                Text(c.granted.map { "Granted \(dateText($0))" } ?? "Grant date unavailable").font(.system(size: 10)).foregroundStyle(.secondary)
-                if !c.supported { Text("Not supported by this plan").font(.system(size: 10)).foregroundStyle(.orange) }
+        HStack(alignment: .top, spacing: 7) {
+            Image(systemName: "arrow.counterclockwise").font(.system(size: 9)).foregroundStyle(.secondary).padding(.top, 2)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Expires \(dateText(c.expires))").font(.system(size: 10, weight: .medium))
+                Text(c.granted.map { "Granted \(dateText($0))" } ?? "Grant date unavailable").font(.system(size: 9)).foregroundStyle(.secondary)
+                if !c.supported { Text("Not supported by this plan").font(.system(size: 9)).foregroundStyle(.orange) }
             }
             Spacer(minLength: 0)
             Text(timeLeft(c.expires)).font(.system(size: 10)).monospacedDigit().foregroundStyle(.secondary)
-        }.padding(.vertical, 5)
+        }.padding(.vertical, 3)
     }
     private func resetPanel(_ s: Snapshot) -> some View {
-        VStack(alignment: .leading, spacing: 15) {
-            Text("Use a saved reset").font(.system(size: 22, weight: .semibold)).tracking(-0.4)
-            Text("Choose a depleted account. Keep newer resets for later.")
-                .font(.system(size: 12)).foregroundStyle(.secondary)
-            VStack(spacing: 0) {
-                ForEach(s.accounts) { a in
-                    Button { store.selectedID = a.id } label: {
-                        HStack(spacing: 10) {
-                            Image(systemName: store.selectedID == a.id ? "largecircle.fill.circle" : "circle")
-                                .foregroundStyle(store.selectedID == a.id ? blue : .secondary)
-                            VStack(alignment: .leading, spacing: 3) {
-                                HStack(spacing: 6) {
-                                    Text(a.name).fontWeight(.semibold)
-                                    if a.id == s.recommended {
-                                        Text("RECOMMENDED").font(.system(size: 8, weight: .semibold)).foregroundStyle(blue)
-                                    }
-                                }.font(.system(size: 12))
-                                Text(a.holdReason ?? "Earliest expiry \(a.nextCredit.map { timeLeft($0.expires) } ?? "unknown")")
-                                    .font(.system(size: 10)).foregroundStyle(.secondary).multilineTextAlignment(.leading)
-                            }
-                            Spacer()
-                            Text(percent(a.remaining)).font(.system(size: 12, weight: .medium)).monospacedDigit()
-                        }.padding(12).frame(maxWidth: .infinity)
-                            .background(store.selectedID == a.id ? blue.opacity(0.07) : .clear)
-                    }.buttonStyle(.plain)
-                    if a.id != s.accounts.last?.id { Divider() }
-                }
-            }.background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 12))
-                .clipShape(RoundedRectangle(cornerRadius: 12))
-            if let a = store.selected {
-                VStack(alignment: .leading, spacing: 12) {
-                    HStack {
-                        Text("\(a.name) · reset preview").font(.system(size: 14, weight: .semibold))
-                        Spacer()
-                        Text(a.available.map { "\($0) saved" } ?? "Unknown").font(.system(size: 11)).foregroundStyle(.secondary)
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Text("Use a saved reset").font(.system(size: 16, weight: .semibold))
+                Spacer()
+                Picker("Account", selection: $store.selectedID) {
+                    Text("Choose account").tag(nil as String?)
+                    ForEach(s.accounts) { a in
+                        Text("\(a.name) · \(percent(a.remaining))\(a.id == s.recommended ? " ★" : "")").tag(Optional(a.id))
                     }
-                    HStack(alignment: .firstTextBaseline, spacing: 10) {
+                }.labelsHidden().pickerStyle(.menu).fixedSize()
+            }
+            if let recommended = s.recommended {
+                Text("Recommended: \(recommended) · earliest expiry on an eligible account")
+                    .font(.system(size: 10)).foregroundStyle(.secondary)
+            }
+            if let a = store.selected {
+                VStack(alignment: .leading, spacing: 9) {
+                    HStack {
+                        Text(a.name).font(.system(size: 13, weight: .semibold))
+                        Spacer()
+                        Text(a.available.map { "\($0) resets saved" } ?? "Resets unknown").font(.system(size: 10)).foregroundStyle(.secondary)
+                    }
+                    HStack(alignment: .firstTextBaseline, spacing: 8) {
                         Text(percent(a.remaining)).foregroundStyle(.secondary)
-                        Image(systemName: "arrow.right").font(.system(size: 15)).foregroundStyle(.secondary)
+                        Image(systemName: "arrow.right").font(.system(size: 13)).foregroundStyle(.secondary)
                         Text("100%").foregroundStyle(blue)
                         Spacer()
                         if let remaining = a.remaining {
-                            Text("+\(Int(100 - remaining)) points").font(.system(size: 11)).foregroundStyle(.secondary)
+                            Text("+\(Int(100 - remaining)) points").font(.system(size: 10)).foregroundStyle(.secondary)
                         }
-                    }.font(.system(size: 29, weight: .semibold, design: .rounded))
-                    Text("Expected weekly quota after one full reset").font(.system(size: 10)).foregroundStyle(.secondary)
+                    }.font(.system(size: 25, weight: .semibold))
                     if let regular = a.weeklyReset {
-                        Text("Without a reset: renews in \(timeLeft(regular)) · \(dateText(regular))")
+                        Text("Regular renewal in \(timeLeft(regular)) · \(dateText(regular))")
                             .font(.system(size: 10)).foregroundStyle(.secondary)
                     }
                     Divider()
-                    Text("AVAILABLE RESETS · EARLIEST EXPIRY FIRST").font(.system(size: 9, weight: .semibold)).foregroundStyle(.secondary)
+                    HStack {
+                        Text("Available resets").fontWeight(.semibold)
+                        Spacer()
+                        Text("Earliest expiry first")
+                    }.font(.system(size: 10)).foregroundStyle(.secondary)
                     ForEach(a.credits) { credit in creditRow(credit) }
-                    Text("OpenAI chooses the credit consumed. The earliest expiry is shown first; a specific credit cannot be selected through this API.")
+                    Divider()
+                    Text("OpenAI selects the credit consumed. We choose the account; expiry order is a guide.")
                         .font(.system(size: 10)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                     if let hold = a.holdReason { Text(hold).font(.system(size: 11)).foregroundStyle(.orange) }
                     Button { store.confirm() } label: {
                         Text(store.busy ? "Please wait…" : "Use 1 reset · \(a.name)")
-                            .font(.system(size: 12, weight: .semibold)).frame(maxWidth: .infinity).padding(.vertical, 6)
+                            .font(.system(size: 12, weight: .semibold)).frame(maxWidth: .infinity).padding(.vertical, 3)
                     }.buttonStyle(.borderedProminent).tint(blue)
                         .disabled(store.busy || !a.eligible || store.stale || s.pending != nil)
-                    Text("This button spends one reset. Availability is checked again before it is applied.")
-                        .font(.system(size: 10)).foregroundStyle(.secondary)
-                }.padding(15).background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 12))
+                    Text("Spends one reset after checking availability again.")
+                        .font(.system(size: 9)).foregroundStyle(.secondary)
+                }.padding(12).background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 10))
             }
-            Text(s.pending ?? "Recommendation: at most 10% remaining, allowed by OpenAI, then earliest expiry. Accounts renewing within an hour can wait.")
+            Text(s.pending ?? "At most 10% remaining, allowed by OpenAI, then earliest expiry. Wait if the weekly quota renews within an hour.")
                 .font(.system(size: 10)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
         }
     }
@@ -390,7 +381,7 @@ struct QuotaView: View {
         item.button?.font = .monospacedDigitSystemFont(ofSize: 12, weight: .medium)
         popover.behavior = .transient
         popover.contentViewController = NSHostingController(rootView: QuotaView(store: store))
-        popover.contentSize = NSSize(width: 430, height: 690)
+        popover.contentSize = NSSize(width: 400, height: 620)
         store.updated = { [weak self] in
             self?.updateTitle()
             if !UserDefaults.standard.bool(forKey: "HasShownSummary") {
@@ -411,7 +402,7 @@ struct QuotaView: View {
             NSBezierPath(roundedRect: NSRect(x: 1, y: 3, width: 18, height: 10), xRadius: 3, yRadius: 3).fill()
             NSColor.labelColor.setFill()
             if fraction > 0 {
-                NSBezierPath(roundedRect: NSRect(x: 1, y: 3, width: max(3, 18 * fraction), height: 10), xRadius: 3, yRadius: 3).fill()
+                NSBezierPath(roundedRect: NSRect(x: 1, y: 3, width: 18 * fraction, height: 10), xRadius: 3, yRadius: 3).fill()
             }
             return true
         }

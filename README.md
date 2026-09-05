@@ -43,7 +43,7 @@ last read failed or the data is older than ten minutes. Unknown data is not zero
 ## Summary and resets
 
 The overview shows total quota, each account's weekly renewal, available resets,
-and credit expiry. Expand an account's reset count to see all grant and expiry dates.
+and credit expiry. Click an account's reset count to open its compact preview with all grant and expiry dates.
 Data refreshes every five minutes. Refresh and opening the reset preview only read
 quota metadata through the management API; they never redeem credits.
 
