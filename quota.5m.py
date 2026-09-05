@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
-"""SwiftBar plugin to display CLIProxyAPI quota for Codex and Antigravity.
+"""Modified by onmax: optional external credentials file for the native companion.
+
+SwiftBar plugin to display CLIProxyAPI quota for Codex and Antigravity.
 
 This plugin queries the CLIProxyAPI Management API to:
 1. List auth files and filter for codex/antigravity providers
@@ -37,7 +39,7 @@ from typing import Any
 # ── Load .env file ───────────────────────────────────────────────────────────
 
 _SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-_ENV_FILE = os.path.join(_SCRIPT_DIR, ".env")
+_ENV_FILE = os.environ.get("CPA_ENV_FILE", os.path.join(_SCRIPT_DIR, ".env"))
 
 if os.path.isfile(_ENV_FILE):
     with open(_ENV_FILE) as _f:
