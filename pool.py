@@ -81,12 +81,14 @@ def request(api, auth, path, method='GET', data=None):
 def read_account(api, auth, name):
     row = {'id': name, 'name': name, 'remaining': None, 'weeklyReset': None,
            'available': None, 'applicable': None, 'credits': [], 'error': None,
-           'creditsError': None, 'authIndex': auth.auth_index if auth else None}
+           'creditsError': None, 'authIndex': auth.auth_index if auth else None,
+           'weight': {'pro': 1, 'plus': 0.05}.get(getattr(auth, 'plan_type', ''))}
     if auth is None:
         row['error'] = 'Account missing or disabled'
         return row
     try:
         usage = request(api, auth, 'usage')
+        row['weight'] = {'pro': 1, 'plus': 0.05}.get(usage.get('plan_type'), row['weight'])
         for window in (usage.get('rate_limit') or {}).values():
             if not isinstance(window, dict):
                 continue
@@ -128,18 +130,20 @@ def read_account(api, auth, name):
 def read_claude(api, auth):
     row = {'id': auth.name, 'name': auth.email or auth.label or auth.name,
            'remaining': None, 'weeklyReset': None, 'sessionRemaining': None,
-           'sessionReset': None, 'error': None}
+           'sessionReset': None, 'weight': None, 'error': None}
     try:
-        result = api._make_request(api.MANAGEMENT_API + '/api-call', method='POST', data={
-            'authIndex': auth.auth_index, 'method': 'GET',
-            'url': 'https://api.anthropic.com/api/oauth/usage',
-            'header': {'Authorization': 'Bearer $TOKEN$', 'anthropic-beta': 'oauth-2025-04-20',
-                       'Accept': 'application/json'}}, max_retries=1)
-        if result.get('status_code') != 200:
-            raise RuntimeError('Sign in again through the proxy dashboard (HTTP 401).' if result.get('status_code') == 401
-                               else 'Claude quota unavailable (HTTP ' + str(result.get('status_code', '?')) + ').')
-        body = result.get('body')
-        usage = json.loads(body) if isinstance(body, str) else body
+        def fetch(path):
+            result = api._make_request(api.MANAGEMENT_API + '/api-call', method='POST', data={
+                'authIndex': auth.auth_index, 'method': 'GET',
+                'url': 'https://api.anthropic.com/api/oauth/' + path,
+                'header': {'Authorization': 'Bearer $TOKEN$', 'anthropic-beta': 'oauth-2025-04-20',
+                           'Accept': 'application/json'}}, max_retries=1)
+            if result.get('status_code') != 200:
+                raise RuntimeError('Sign in again through the proxy dashboard (HTTP 401).' if result.get('status_code') == 401
+                                   else 'Claude quota unavailable (HTTP ' + str(result.get('status_code', '?')) + ').')
+            body = result.get('body')
+            return json.loads(body) if isinstance(body, str) else body
+        usage = fetch('usage')
         for key, remaining, reset in [('seven_day', 'remaining', 'weeklyReset'),
                                       ('five_hour', 'sessionRemaining', 'sessionReset')]:
             window = usage.get(key) or {}
@@ -149,6 +153,15 @@ def read_claude(api, auth):
                 row[reset] = timestamp(window.get('resets_at'))
         if row['remaining'] is None:
             row['error'] = 'Weekly quota unavailable'
+        try:
+            organization = fetch('profile').get('organization') or {}
+            # ponytail: nominal plan weights; use provider weekly capacities if exposed.
+            row['weight'] = {'default_claude_max_20x': 1, 'default_claude_max_5x': 0.25,
+                             'default_claude_pro': 0.05}.get(organization.get('rate_limit_tier'))
+            if organization.get('seat_tier') == 'team_standard':
+                row['weight'] = 0.05
+        except Exception:
+            pass  # Usage remains useful when plan metadata is unavailable.
     except RuntimeError as exc:
         row['error'] = str(exc)
     except Exception:
@@ -193,12 +206,13 @@ def snapshot(api, config):
         row['revision'] = hashlib.sha256(json.dumps(material, sort_keys=True).encode()).hexdigest()
     eligible = [r for r in rows if r['eligible']]
     eligible.sort(key=lambda r: (min(c['expires'] for c in r['credits'] if c['supported']), r['remaining'], r['id']))
-    known = [r['remaining'] for r in rows if r['remaining'] is not None]
+    known = [r['remaining'] * r['weight'] for r in rows
+             if r['remaining'] is not None and r['weight'] is not None]
     with concurrent.futures.ThreadPoolExecutor(max_workers=4) as workers:
         claude = list(workers.map(lambda auth: read_claude(api, auth),
                                  [a for a in files if a.provider == 'claude' and not a.disabled]))
     result = {'updated': now, 'accounts': rows, 'total': sum(known) if known else None,
-              'knownAccounts': len(known), 'claude': claude, 'capacity': 100 * len(rows), 'recommended': eligible[0]['id'] if eligible else None,
+              'knownAccounts': len(known), 'claude': claude, 'capacity': sum(100 * r['weight'] for r in rows if r['weight'] is not None), 'recommended': eligible[0]['id'] if eligible else None,
               'dashboard': config.get('dashboard_url', config['base_url'] + '/management.html'),
               'pending': None}
     pending = STATE / 'pending-reset.json'

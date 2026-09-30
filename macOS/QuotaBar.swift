@@ -10,6 +10,7 @@ struct ResetCredit: Decodable, Identifiable {
 struct Account: Decodable, Identifiable {
     let id: String
     let name: String
+    let weight: Double?
     let remaining: Double?
     let weeklyReset: Double?
     let available: Int?
@@ -25,6 +26,7 @@ struct Account: Decodable, Identifiable {
 struct ClaudeAccount: Decodable, Identifiable {
     let id: String
     let name: String
+    let weight: Double?
     let remaining: Double?
     let weeklyReset: Double?
     let sessionRemaining: Double?
@@ -37,7 +39,7 @@ struct Snapshot: Decodable {
     let updated: Double
     let accounts: [Account]
     let total: Double?
-    let capacity: Int
+    let capacity: Double
     let recommended: String?
     let dashboard: String
     let pending: String?
@@ -244,7 +246,7 @@ struct QuotaView: View {
                 }
                 HStack(alignment: .firstTextBaseline, spacing: 5) {
                     Text(percent(s.total) + (s.knownAccounts < s.accounts.count ? "+" : "")).font(.system(size: 35, weight: .semibold)).monospacedDigit()
-                    Text("/ \(s.capacity)%").font(.system(size: 16)).opacity(0.65)
+                    Text("/ " + percent(s.capacity)).font(.system(size: 16)).opacity(0.65)
                     Spacer()
                     let count = s.accounts.compactMap(\.available)
                     Text(count.count == s.accounts.count ? "\(count.reduce(0, +)) resets saved" : "\(count.reduce(0, +))+ resets known")
@@ -428,22 +430,18 @@ struct QuotaView: View {
         }
     }
     private func updateTitle() {
-        let fraction = min(1, max(0, (store.snapshot?.total ?? 0) / Double(store.snapshot?.capacity ?? 400)))
-        let image = NSImage(size: NSSize(width: 20, height: 16), flipped: false) { rect in
-            NSColor.labelColor.withAlphaComponent(0.25).setFill()
-            NSBezierPath(roundedRect: NSRect(x: 1, y: 3, width: 18, height: 10), xRadius: 3, yRadius: 3).fill()
-            NSColor.labelColor.setFill()
-            if fraction > 0 {
-                NSBezierPath(roundedRect: NSRect(x: 1, y: 3, width: 18 * fraction, height: 10), xRadius: 3, yRadius: 3).fill()
-            }
-            return true
+        let snapshot = store.snapshot
+        let codex = percent(snapshot?.total) + (snapshot.map { $0.knownAccounts < $0.accounts.count } == true ? "+" : "")
+        let claudeRows = snapshot?.claude ?? []
+        let knownClaude = claudeRows.compactMap { account -> Double? in
+            guard let remaining = account.remaining, let weight = account.weight else { return nil }
+            return remaining * weight
         }
-        image.isTemplate = true
-        item.button?.image = image
-        item.button?.imagePosition = .imageLeading
-        item.button?.title = " " + percent(store.snapshot?.total) + (store.stale || store.failed || store.snapshot.map { $0.knownAccounts < $0.accounts.count } == true ? " ·" : "")
-        item.button?.toolTip = "Weekly quota remaining: \(percent(store.snapshot?.total)) of \(store.snapshot?.capacity ?? 400)%"
-        item.button?.setAccessibilityLabel("Codex quota, \(percent(store.snapshot?.total)) weekly remaining. Open account summary.")
+        let claude = percent(knownClaude.isEmpty ? nil : knownClaude.reduce(0, +)) + (knownClaude.count < claudeRows.count ? "+" : "")
+        item.button?.image = nil
+        item.button?.title = "\(codex) / \(claude)"
+        item.button?.toolTip = "Codex / Claude Code weekly remaining · 20× plan = 100%, 1× = 5%. + means incomplete data. Claude is a plan-equivalent estimate."
+        item.button?.setAccessibilityLabel("Codex \(codex), Claude Code \(claude), weekly remaining. Open account summary.")
     }
     @objc private func toggle() {
         guard let button = item.button else { return }
