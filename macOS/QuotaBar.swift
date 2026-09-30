@@ -22,7 +22,18 @@ struct Account: Decodable, Identifiable {
     let revision: String
     var nextCredit: ResetCredit? { credits.first(where: { $0.supported }) }
 }
+struct ClaudeAccount: Decodable, Identifiable {
+    let id: String
+    let name: String
+    let remaining: Double?
+    let weeklyReset: Double?
+    let sessionRemaining: Double?
+    let sessionReset: Double?
+    let error: String?
+}
 struct Snapshot: Decodable {
+    let knownAccounts: Int
+    let claude: [ClaudeAccount]
     let updated: Double
     let accounts: [Account]
     let total: Double?
@@ -166,7 +177,7 @@ struct QuotaView: View {
         VStack(spacing: 0) {
             HStack(spacing: 9) {
                 Image(systemName: "terminal.fill").font(.system(size: 19)).foregroundStyle(blue)
-                Text("Codex").font(.system(size: 15, weight: .semibold))
+                Text("Codex & Claude Code").font(.system(size: 15, weight: .semibold))
                 Spacer()
                 Button(action: store.refresh) { Image(systemName: "arrow.clockwise") }
                     .buttonStyle(.plain).disabled(store.busy).help("Refresh quota")
@@ -227,16 +238,16 @@ struct QuotaView: View {
         VStack(alignment: .leading, spacing: 10) {
             VStack(alignment: .leading, spacing: 8) {
                 HStack {
-                    Text("Weekly remaining").font(.system(size: 12, weight: .semibold))
+                    Text("Codex weekly remaining").font(.system(size: 12, weight: .semibold))
                     Spacer()
-                    Text("\(s.accounts.count) Pro accounts").font(.system(size: 10)).opacity(0.8)
+                    Text("\(s.knownAccounts)/\(s.accounts.count) accounts reporting").font(.system(size: 10)).opacity(0.8)
                 }
                 HStack(alignment: .firstTextBaseline, spacing: 5) {
-                    Text(percent(s.total)).font(.system(size: 35, weight: .semibold)).monospacedDigit()
+                    Text(percent(s.total) + (s.knownAccounts < s.accounts.count ? "+" : "")).font(.system(size: 35, weight: .semibold)).monospacedDigit()
                     Text("/ \(s.capacity)%").font(.system(size: 16)).opacity(0.65)
                     Spacer()
                     let count = s.accounts.compactMap(\.available)
-                    Text(count.count == s.accounts.count ? "\(count.reduce(0, +)) resets saved" : "Resets unknown")
+                    Text(count.count == s.accounts.count ? "\(count.reduce(0, +)) resets saved" : "\(count.reduce(0, +))+ resets known")
                         .font(.system(size: 10)).opacity(0.85)
                 }
                 QuotaTrack(value: s.total ?? 0, capacity: Double(s.capacity), color: .white, track: .white.opacity(0.2))
@@ -252,6 +263,27 @@ struct QuotaView: View {
                     if index < s.accounts.count - 1 { Divider().padding(.horizontal, 12) }
                 }
             }.background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 10))
+            if !s.claude.isEmpty {
+                Text("Claude Code").font(.system(size: 12, weight: .semibold))
+                ForEach(s.claude) { account in
+                    VStack(alignment: .leading, spacing: 6) {
+                        HStack {
+                            Text(account.name).fontWeight(.semibold)
+                            Spacer()
+                            Text("Weekly: " + percent(account.remaining)).monospacedDigit()
+                        }
+                        QuotaTrack(value: account.remaining ?? 0, color: blue)
+                        HStack {
+                            Text("5h: " + percent(account.sessionRemaining))
+                                .help(account.sessionReset.map(dateText) ?? "Session renewal unknown")
+                            Spacer()
+                            Text(account.weeklyReset.map { "Renews in \(timeLeft($0))" } ?? "Renewal unknown")
+                        }.foregroundStyle(.secondary)
+                        if let error = account.error { Text(error).foregroundStyle(.orange) }
+                    }.font(.system(size: 10)).padding(12)
+                        .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 10))
+                }
+            }
             if let recommended = s.accounts.first(where: { $0.id == s.recommended }), let credit = recommended.nextCredit {
                 Button { store.preview(recommended) } label: {
                     HStack(spacing: 8) {
@@ -409,7 +441,7 @@ struct QuotaView: View {
         image.isTemplate = true
         item.button?.image = image
         item.button?.imagePosition = .imageLeading
-        item.button?.title = " " + percent(store.snapshot?.total) + (store.stale || store.failed ? " ·" : "")
+        item.button?.title = " " + percent(store.snapshot?.total) + (store.stale || store.failed || store.snapshot.map { $0.knownAccounts < $0.accounts.count } == true ? " ·" : "")
         item.button?.toolTip = "Weekly quota remaining: \(percent(store.snapshot?.total)) of \(store.snapshot?.capacity ?? 400)%"
         item.button?.setAccessibilityLabel("Codex quota, \(percent(store.snapshot?.total)) weekly remaining. Open account summary.")
     }

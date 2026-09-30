@@ -70,7 +70,7 @@ def request(api, auth, path, method='GET', data=None):
     result = api._make_request(api.MANAGEMENT_API + '/api-call', method='POST', data=payload,
                                max_retries=1 if method == 'POST' else 2)
     if not 200 <= result.get('status_code', 0) < 300:
-        raise RuntimeError('Provider returned HTTP ' + str(result.get('status_code', '?')))
+        raise RuntimeError('Sign in again through the proxy dashboard (HTTP 401).' if result.get('status_code') == 401 else 'Provider returned HTTP ' + str(result.get('status_code', '?')))
     body = result.get('body')
     parsed = json.loads(body) if isinstance(body, str) and body else body
     if method == 'GET' and not isinstance(parsed, dict):
@@ -102,8 +102,10 @@ def read_account(api, auth, name):
         counts = usage.get('rate_limit_reset_credits') or {}
         row['available'] = number(counts.get('available_count'))
         row['applicable'] = number(counts.get('applicable_available_count'))
+    except RuntimeError as exc:
+        row['error'] = str(exc)
     except Exception:
-        row['error'] = 'Could not read quota. Refresh to reconnect.'
+        row['error'] = 'Could not read quota. Check the connection and refresh.'
     try:
         data = request(api, auth, 'rate-limit-reset-credits')
         row['available'] = number(data.get('available_count'))
@@ -120,6 +122,37 @@ def read_account(api, auth, name):
         row['credits'].sort(key=lambda c: (c['expires'], c['granted'] or 0, c['id']))
     except Exception:
         row['creditsError'] = 'Reset details unavailable'
+    return row
+
+
+def read_claude(api, auth):
+    row = {'id': auth.name, 'name': auth.email or auth.label or auth.name,
+           'remaining': None, 'weeklyReset': None, 'sessionRemaining': None,
+           'sessionReset': None, 'error': None}
+    try:
+        result = api._make_request(api.MANAGEMENT_API + '/api-call', method='POST', data={
+            'authIndex': auth.auth_index, 'method': 'GET',
+            'url': 'https://api.anthropic.com/api/oauth/usage',
+            'header': {'Authorization': 'Bearer $TOKEN$', 'anthropic-beta': 'oauth-2025-04-20',
+                       'Accept': 'application/json'}}, max_retries=1)
+        if result.get('status_code') != 200:
+            raise RuntimeError('Sign in again through the proxy dashboard (HTTP 401).' if result.get('status_code') == 401
+                               else 'Claude quota unavailable (HTTP ' + str(result.get('status_code', '?')) + ').')
+        body = result.get('body')
+        usage = json.loads(body) if isinstance(body, str) else body
+        for key, remaining, reset in [('seven_day', 'remaining', 'weeklyReset'),
+                                      ('five_hour', 'sessionRemaining', 'sessionReset')]:
+            window = usage.get(key) or {}
+            used = number(window.get('utilization'))
+            if used is not None and 0 <= used <= 100:
+                row[remaining] = 100 - used
+                row[reset] = timestamp(window.get('resets_at'))
+        if row['remaining'] is None:
+            row['error'] = 'Weekly quota unavailable'
+    except RuntimeError as exc:
+        row['error'] = str(exc)
+    except Exception:
+        row['error'] = 'Could not read Claude quota. Check the connection and refresh.'
     return row
 
 
@@ -160,9 +193,12 @@ def snapshot(api, config):
         row['revision'] = hashlib.sha256(json.dumps(material, sort_keys=True).encode()).hexdigest()
     eligible = [r for r in rows if r['eligible']]
     eligible.sort(key=lambda r: (min(c['expires'] for c in r['credits'] if c['supported']), r['remaining'], r['id']))
-    complete = all(r['remaining'] is not None and not r['error'] for r in rows)
-    result = {'updated': now, 'accounts': rows, 'total': sum(r['remaining'] for r in rows) if complete else None,
-              'capacity': 100 * len(rows), 'recommended': eligible[0]['id'] if eligible else None,
+    known = [r['remaining'] for r in rows if r['remaining'] is not None]
+    with concurrent.futures.ThreadPoolExecutor(max_workers=4) as workers:
+        claude = list(workers.map(lambda auth: read_claude(api, auth),
+                                 [a for a in files if a.provider == 'claude' and not a.disabled]))
+    result = {'updated': now, 'accounts': rows, 'total': sum(known) if known else None,
+              'knownAccounts': len(known), 'claude': claude, 'capacity': 100 * len(rows), 'recommended': eligible[0]['id'] if eligible else None,
               'dashboard': config.get('dashboard_url', config['base_url'] + '/management.html'),
               'pending': None}
     pending = STATE / 'pending-reset.json'

@@ -61,7 +61,7 @@ MANAGEMENT_API = f"{BASE_URL}/v0/management"
 REQUEST_TIMEOUT = 15  # seconds
 
 # Providers we care about
-TARGET_PROVIDERS = {"codex", "antigravity"}
+TARGET_PROVIDERS = {"codex", "antigravity", "claude"}
 
 # ── Upstream API Constants (from Management Center source) ───────────────────
 
